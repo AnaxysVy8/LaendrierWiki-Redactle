@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>Lændrïer Redactle Multiplayer</title>
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <style>
+    body { font-family: sans-serif; max-width: 800px; margin: 20px auto; padding: 0 20px; line-height: 1.6; background: #f4f4f9; color: #333; }
+    h1 { text-align: center; margin-bottom: 5px; }
+    #multiplayer-box { background: #e9ecef; padding: 12px; border-radius: 8px; text-align: center; margin-bottom: 15px; font-weight: bold; }
+    #controls { background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; text-align: center; }
+    input[type="text"] { padding: 8px; font-size: 16px; width: 200px; }
+    button { padding: 8px 15px; font-size: 16px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; margin-left: 5px; }
+    button:hover { background: #0056b3; }
+    #stats { margin-top: 10px; font-weight: bold; }
+    #content { background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); font-size: 18px; min-height: 200px; }
+    .redacted { background-color: #000; color: #000; padding: 0 2px; border-radius: 2px; user-select: none; }
+    .revealed { background-color: #e2f0d9; color: #276a3c; font-weight: bold; padding: 0 2px; }
+    .common { font-weight: normal; }
+  </style>
+</head>
+<body>
+
+  <h1>Lændrïer Redactle MP</h1>
+  
+  <div id="multiplayer-box">
+    <span id="mp-status">Multiplayer: Verbinde mit Netzwerk...</span>
+    <div id="lobby-link-container" style="display:none; margin-top: 5px;">
+      Teile diesen Link: <input type="text" id="lobby-link" readonly style="width: 350px;" onclick="this.select()">
+    </div>
+  </div>
+
+  <div id="controls">
+    <button id="new-game-btn" onclick="startNewGame()">Neues Spiel starten (Host)</button>
+    <br><br>
+    <input type="text" id="guessInput" placeholder="Wort erraten..." onkeydown="if(event.key==='Enter') makeGuess()">
+    <button onclick="makeGuess()">Raten</button>
+    <div id="stats">Versuche: <span id="attemptCount">0</span></div>
+  </div>
+
+  <div id="content">Warte auf Spielstart...</div>
+
+  <script>
+    const API_URL = "https://laendrierminecraft.miraheze.org/w/api.php";
+    const COMMON_WORDS = new Set(["der", "die", "das", "des", "dem", "den", "ein", "eine", "einer", "eines", "einem", "einen", "und", "oder", "aber", "ist", "sind", "war", "waren", "von", "mit", "in", "im", "auf", "für", "an", "zu", "aus", "bei", "nach", "über", "um", "wie", "als", "auch", "nicht", "es", "er", "sie"]);
+
+    let peer, conn;
+    let connections = [];
+    let isHost = false;
+    let rawTokens = [];
+    let guessedWords = new Set();
+    let attempts = 0;
+    let targetTitle = "";
+    let isWon = false;
+
+    // 1. Multiplayer (PeerJS) Initialisierung
+    const urlParams = new URLSearchParams(window.location.search);
+    const hostId = urlParams.get('host');
+
+    peer = new Peer();
+
+    peer.on('open', (id) => {
+      if (hostId) {
+        // Mit Host verbinden
+        document.getElementById("mp-status").innerText = "Verbinde mit Host-Lobby...";
+        document.getElementById("new-game-btn").style.display = "none";
+        conn = peer.connect(hostId);
+        setupConnection(conn);
+      } else {
+        // Host sein
+        isHost = true;
+        document.getElementById("mp-status").innerText = "Du bist der Host!";
+        const shareUrl = `${window.location.origin}${window.location.pathname}?host=${id}`;
+        document.getElementById("lobby-link").value = shareUrl;
+        document.getElementById("lobby-link-container").style.display = "block";
+      }
+    });
+
+    peer.on('connection', (c) => {
+      if (isHost) {
+        connections.push(c);
+        setupConnection(c);
+        // Sende dem neuen Spieler den aktuellen Spielstand
+        setTimeout(() => {
+          c.send({ type: 'INIT', rawTokens, guessedArray: Array.from(guessedWords), targetTitle, attempts, isWon });
+        }, 500);
+      }
+    });
+
+    function setupConnection(c) {
+      c.on('data', (data) => {
+        if (data.type === 'INIT') {
+          rawTokens = data.rawTokens;
+          guessedWords = new Set(data.guessedArray);
+          targetTitle = data.targetTitle;
+          attempts = data.attempts;
+          isWon = data.isWon;
+          document.getElementById("attemptCount").innerText = attempts;
+          renderText();
+        } else if (data.type === 'GUESS') {
+          handleGuess(data.guess, false);
+        } else if (data.type === 'NEW_GAME') {
+          rawTokens = data.rawTokens;
+          targetTitle = data.targetTitle;
+          guessedWords.clear();
+          attempts = 0;
+          isWon = false;
+          document.getElementById("attemptCount").innerText = 0;
+          renderText();
+        }
+      });
+    }
+
+    function broadcast(data) {
+      if (isHost) {
+        connections.forEach(c => c.send(data));
+      } else if (conn) {
+        conn.send(data);
+      }
+    }
+
+    // 2. Spiel-Logik
+    async function startNewGame() {
+      if (!isHost) return;
+      document.getElementById("content").innerText = "Lade zufälligen Artikel...";
+      guessedWords.clear();
+      attempts = 0;
+      isWon = false;
+      document.getElementById("attemptCount").innerText = attempts;
+
+      try {
+        const randRes = await fetch(`${API_URL}?action=query&list=random&rnnamespace=0&rnlimit=1&format=json&origin=*`).then(r => r.json());
+        const page = randRes.query.random[0];
+        targetTitle = page.title;
+
+        const parseRes = await fetch(`${API_URL}?action=parse&pageid=${page.id}&prop=text&format=json&origin=*`).then(r => r.json());
+        const rawHtml = parseRes.parse.text["*"];
+
+        const doc = new DOMParser().parseFromString(rawHtml, "text/html");
+        const plainText = doc.body.textContent || "";
+        rawTokens = plainText.match(/[\wÄÖÜäöüß]+|[^\w\s]+|\s+/g) || [];
+
+        renderText();
+        broadcast({ type: 'NEW_GAME', rawTokens, targetTitle });
+      } catch (e) {
+        document.getElementById("content").innerText = "Fehler beim Laden. Prüfe, ob das Wiki öffentlich ist.";
+      }
+    }
+
+    function makeGuess() {
+      const input = document.getElementById("guessInput");
+      const guess = input.value.trim().toLowerCase();
+      input.value = "";
+      if (!guess || isWon || guessedWords.has(guess)) return;
+
+      handleGuess(guess, true);
+    }
+
+    function handleGuess(guess, isLocal) {
+      if (guessedWords.has(guess)) return;
+      
+      guessedWords.add(guess);
+      attempts++;
+      document.getElementById("attemptCount").innerText = attempts;
+
+      if (guess === targetTitle.toLowerCase()) {
+        isWon = true;
+        alert(`Glückwunsch! Artikel "${targetTitle}" wurde gelöst!`);
+      }
+
+      renderText();
+
+      if (isLocal) {
+        broadcast({ type: 'GUESS', guess });
+      }
+    }
+
+    function renderText() {
+      const container = document.getElementById("content");
+      container.innerHTML = "";
+
+      rawTokens.forEach(token => {
+        const clean = token.toLowerCase().trim();
+        const isWord = /^[\wÄÖÜäöüß]+$/.test(token);
+
+        if (!isWord) {
+          container.appendChild(document.createTextNode(token));
+        } else if (COMMON_WORDS.has(clean)) {
+          const span = document.createElement("span");
+          span.className = "common";
+          span.innerText = token;
+          container.appendChild(span);
+        } else if (guessedWords.has(clean)) {
+          const span = document.createElement("span");
+          span.className = "revealed";
+          span.innerText = token;
+          container.appendChild(span);
+        } else {
+          const span = document.createElement("span");
+          span.className = "redacted";
+          span.innerText = "█".repeat(token.length);
+          container.appendChild(span);
+        }
+      });
+    }
+  </script>
+</body>
+</html>
