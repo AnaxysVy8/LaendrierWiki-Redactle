@@ -41,7 +41,10 @@
   <div id="content">Warte auf Spielstart...</div>
 
   <script>
-    const API_URL = "https://laendrierminecraft.miraheze.org/w/api.php";
+    // Zeigt auf den Cloudflare-Worker-Proxy (siehe worker.js), NICHT direkt
+    // auf die Wiki-API — der Worker übernimmt den Login fürs private Wiki.
+    // Eigene *.workers.dev URL hier eintragen, ohne Slash am Ende:
+    const PROXY_URL = "https://twilight-art-b7f4.hergert-ryan2008.workers.dev";
     const COMMON_WORDS = new Set(["der", "die", "das", "des", "dem", "den", "ein", "eine", "einer", "eines", "einem", "einen", "und", "oder", "aber", "ist", "sind", "war", "waren", "von", "mit", "in", "im", "auf", "für", "an", "zu", "aus", "bei", "nach", "über", "um", "wie", "als", "auch", "nicht", "es", "er", "sie"]);
 
     let peer, conn;
@@ -129,12 +132,13 @@
       document.getElementById("attemptCount").innerText = attempts;
 
       try {
-        const randRes = await fetch(`${API_URL}?action=query&list=random&rnnamespace=0&rnlimit=1&format=json&origin=*`).then(r => r.json());
-        const page = randRes.query.random[0];
+        const page = await fetch(`${PROXY_URL}/random`).then(r => r.json());
+        if (page.error) throw new Error(page.error);
         targetTitle = page.title;
 
-        const parseRes = await fetch(`${API_URL}?action=parse&pageid=${page.id}&prop=text&format=json&origin=*`).then(r => r.json());
-        const rawHtml = parseRes.parse.text["*"];
+        const parseRes = await fetch(`${PROXY_URL}/parse?pageid=${page.id}`).then(r => r.json());
+        if (parseRes.error) throw new Error(parseRes.error);
+        const rawHtml = parseRes.html;
 
         const doc = new DOMParser().parseFromString(rawHtml, "text/html");
         const plainText = doc.body.textContent || "";
