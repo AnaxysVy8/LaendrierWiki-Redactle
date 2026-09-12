@@ -7,6 +7,8 @@ Das Spiel enthält:
 » Hinweissatz + 3 Aufdeckungshinweise pro Spieler
 » Alle Artikel des Lændrïer-Wikis
 
+momentane Version: Beta-0.1
+
 # Momentane Artikel im Spiel: 23
 - Hauptartikel: 11
 - Lændrïer I: 0
