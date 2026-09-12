@@ -290,6 +290,26 @@
     handleGuess(guess, true);
   }
 
+  function titleSignificantNorms() {
+    const titleTokens = targetTitle.match(TOKEN_REGEX) || [];
+    const norms = new Set();
+    titleTokens.forEach(token => {
+      if (!WORD_REGEX.test(token)) return;
+      if (COMMON_WORDS.has(token.toLowerCase())) return;
+      norms.add(normalize(token));
+    });
+    return norms;
+  }
+
+  function isTitleFullyGuessed() {
+    const needed = titleSignificantNorms();
+    if (needed.size === 0) return false;
+    for (const n of needed) {
+      if (!guessedNorms.has(n)) return false;
+    }
+    return true;
+  }
+
   function handleGuess(guess, isLocal) {
     const norm = normalize(guess);
     if (guessedNorms.has(norm)) return;
@@ -300,7 +320,7 @@
     document.getElementById("attemptCount").innerText = attempts;
     selectedWord = norm;
 
-    if (norm === normalize(targetTitle)) {
+    if (!isWon && isTitleFullyGuessed()) {
       isWon = true;
       setTimeout(() => alert(`Glückwunsch! Artikel "${targetTitle}" wurde gelöst!`), 50);
     }
@@ -347,7 +367,7 @@
       span.innerText = token;
       return span;
     }
-    if (guessedNorms.has(norm)) {
+    if (isWon || guessedNorms.has(norm)) {
       const span = document.createElement("span");
       span.className = "revealed" + (selectedWord === norm ? " selected" : "");
       span.innerText = token;
