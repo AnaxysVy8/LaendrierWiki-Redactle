@@ -40,11 +40,7 @@
   #lobby-link { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; }
 
   .layout { display: flex; gap: 16px; padding: 20px; align-items: flex-start; }
-  #content {
-    flex: 1 1 auto; background: var(--panel); border: 1px solid var(--border);
-    border-radius: 10px; padding: 28px; font-size: 19px; line-height: 2;
-    min-height: 400px; white-space: pre-wrap;
-  }
+
   #title-label {
     font-size: 12px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px;
   }
@@ -52,6 +48,12 @@
     font-size: 28px; font-weight: 800; margin-bottom: 18px; line-height: 1.4;
   }
   #title-banner .redacted { font-size: 18px; padding: 2px 10px; }
+
+  #content {
+    flex: 1 1 auto; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 28px; font-size: 19px; line-height: 2;
+    min-height: 400px; white-space: pre-wrap;
+  }
 
   .redacted {
     display: inline-block; background: var(--redacted-bg); color: var(--redacted-text);
@@ -144,6 +146,24 @@
   const TOKEN_REGEX = /[\p{L}\p{N}_]+|[^\p{L}\p{N}\s]+|\s+/gu;
   const WORD_REGEX = /^[\p{L}\p{N}_]+$/u;
 
+  // Erlaubt alternative Schreibweisen beim Raten (z.B. "Laendrier" statt
+  // "Lændrïer"). Wird NUR zum Vergleichen benutzt, die Anzeige bleibt original.
+  function normalize(str) {
+    return str
+      .toLowerCase()
+      .replaceAll("ß", "ss")
+      .replaceAll("æ", "ae")
+      .replaceAll("œ", "oe")
+      .replaceAll("ä", "a")
+      .replaceAll("ö", "o")
+      .replaceAll("ü", "u")
+      .replaceAll("ï", "i")
+      .replaceAll("ë", "e")
+      .replaceAll("å", "a")
+      .replaceAll("ø", "o")
+      .trim();
+  }
+
   const ARTICLES_URL = "./articles.json";
   const COMMON_WORDS = new Set(["der", "die", "das", "des", "dem", "den", "ein", "eine", "einer", "eines", "einem", "einen", "und", "oder", "aber", "ist", "sind", "war", "waren", "von", "mit", "in", "im", "auf", "für", "an", "zu", "aus", "bei", "nach", "über", "um", "wie", "als", "auch", "nicht", "es", "er", "sie"]);
 
@@ -151,12 +171,12 @@
   let connections = [];
   let isHost = false;
   let rawTokens = [];
-  let guessOrder = [];      // Reihenfolge der geratenen Wörter (älteste zuerst)
-  let guessedSet = new Set();
+  let guessOrder = [];        // [{word, norm}] Reihenfolge der geratenen Wörter (älteste zuerst)
+  let guessedNorms = new Set(); // normalisierte Formen, für schnellen Abgleich/Duplikat-Check
   let attempts = 0;
   let targetTitle = "";
   let isWon = false;
-  let selectedWord = null;  // aktuell im Text hervorgehobenes Wort
+  let selectedWord = null;   // aktuell hervorgehobene NORMALISIERTE Form
   let articlesCache = null;
 
   const urlParams = new URLSearchParams(window.location.search);
@@ -194,7 +214,7 @@
       if (data.type === 'INIT') {
         rawTokens = data.rawTokens;
         guessOrder = data.guessOrder || [];
-        guessedSet = new Set(guessOrder);
+        guessedNorms = new Set(guessOrder.map(g => g.norm));
         targetTitle = data.targetTitle;
         attempts = data.attempts;
         isWon = data.isWon;
@@ -207,7 +227,7 @@
         rawTokens = data.rawTokens;
         targetTitle = data.targetTitle;
         guessOrder = [];
-        guessedSet = new Set();
+        guessedNorms = new Set();
         attempts = 0;
         isWon = false;
         selectedWord = null;
@@ -240,7 +260,7 @@
     if (!isHost) return;
     document.getElementById("content").innerText = "Lade zufälligen Artikel...";
     guessOrder = [];
-    guessedSet = new Set();
+    guessedNorms = new Set();
     attempts = 0;
     isWon = false;
     selectedWord = null;
@@ -265,20 +285,22 @@
     const input = document.getElementById("guessInput");
     const guess = input.value.trim().toLowerCase();
     input.value = "";
-    if (!guess || /\s/.test(guess) || isWon || guessedSet.has(guess)) return;
+    if (!guess || /\s/.test(guess) || isWon) return;
+    if (guessedNorms.has(normalize(guess))) return;
     handleGuess(guess, true);
   }
 
   function handleGuess(guess, isLocal) {
-    if (guessedSet.has(guess)) return;
+    const norm = normalize(guess);
+    if (guessedNorms.has(norm)) return;
 
-    guessedSet.add(guess);
-    guessOrder.push(guess);
+    guessedNorms.add(norm);
+    guessOrder.push({ word: guess, norm });
     attempts++;
     document.getElementById("attemptCount").innerText = attempts;
-    selectedWord = guess;
+    selectedWord = norm;
 
-    if (guess === targetTitle.toLowerCase()) {
+    if (norm === normalize(targetTitle)) {
       isWon = true;
       setTimeout(() => alert(`Glückwunsch! Artikel "${targetTitle}" wurde gelöst!`), 50);
     }
@@ -290,15 +312,15 @@
     }
   }
 
-  function toggleSelect(word) {
-    selectedWord = (selectedWord === word) ? null : word;
+  function toggleSelect(norm) {
+    selectedWord = (selectedWord === norm) ? null : norm;
     renderAll();
   }
 
-  function countOccurrences(word) {
+  function countOccurrences(norm) {
     let n = 0;
     for (const token of rawTokens) {
-      if (token.toLowerCase().trim() === word) n++;
+      if (normalize(token) === norm) n++;
     }
     return n;
   }
@@ -311,28 +333,30 @@
 
   // Baut für ein Token das passende Element (redigiert/aufgedeckt/häufig/Satzzeichen)
   function buildWordSpan(token) {
-    const clean = token.toLowerCase().trim();
     const isWord = WORD_REGEX.test(token);
-
     if (!isWord) {
       return document.createTextNode(token);
     }
-    if (COMMON_WORDS.has(clean)) {
+
+    const norm = normalize(token);
+    const lower = token.toLowerCase();
+
+    if (COMMON_WORDS.has(lower)) {
       const span = document.createElement("span");
       span.className = "common";
       span.innerText = token;
       return span;
     }
-    if (guessedSet.has(clean)) {
+    if (guessedNorms.has(norm)) {
       const span = document.createElement("span");
-      span.className = "revealed" + (selectedWord === clean ? " selected" : "");
+      span.className = "revealed" + (selectedWord === norm ? " selected" : "");
       span.innerText = token;
-      span.onclick = () => toggleSelect(clean);
+      span.onclick = () => toggleSelect(norm);
       return span;
     }
     const span = document.createElement("span");
     span.className = "redacted";
-    span.innerText = String(clean.length);
+    span.innerText = String(lower.length);
     return span;
   }
 
@@ -366,14 +390,14 @@
 
     // Neueste zuerst anzeigen, Rang-Nummer bleibt die ursprüngliche Reihenfolge
     for (let i = guessOrder.length - 1; i >= 0; i--) {
-      const word = guessOrder[i];
+      const { word, norm } = guessOrder[i];
       const rank = i + 1;
-      const count = countOccurrences(word);
-      const isCorrect = word === targetTitle.toLowerCase();
+      const count = countOccurrences(norm);
+      const isCorrect = norm === normalize(targetTitle);
 
       const row = document.createElement("div");
-      row.className = "guess-row" + (selectedWord === word ? " selected" : "");
-      row.onclick = () => toggleSelect(word);
+      row.className = "guess-row" + (selectedWord === norm ? " selected" : "");
+      row.onclick = () => toggleSelect(norm);
 
       row.innerHTML = `
         <span class="guess-rank">#${rank}</span>
