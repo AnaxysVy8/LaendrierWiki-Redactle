@@ -1,7 +1,7 @@
-# LaendrierWiki-Redactle
+# [LaendrierWiki-Redactle](https://anaxysvy8.github.io/LaendrierWiki-Redactle/)
 Redactle über das Laendrier-Wiki.
 
-Dieses Spiel von Redactle handelt über das ganze Lændrïer-Wiki. Der Link zu dem Spiel ist folgend: XXX
+Dieses Spiel von Redactle handelt über das ganze Lændrïer-Wiki. Der Link zu dem Spiel ist folgend: https://anaxysvy8.github.io/LaendrierWiki-Redactle/
 Das Spiel enthält:
 » Mehrspieler-Support
 » Hinweissatz + 3 Aufdeckungshinweise pro Spieler
