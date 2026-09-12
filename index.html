@@ -1,217 +1,369 @@
 <!DOCTYPE html>
 <html lang="de">
 <head>
-  <meta charset="UTF-8">
-  <title>Lændrïer Redactle Multiplayer</title>
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <style>
-    body { font-family: sans-serif; max-width: 800px; margin: 20px auto; padding: 0 20px; line-height: 1.6; background: #f4f4f9; color: #333; }
-    h1 { text-align: center; margin-bottom: 5px; }
-    #multiplayer-box { background: #e9ecef; padding: 12px; border-radius: 8px; text-align: center; margin-bottom: 15px; font-weight: bold; }
-    #controls { background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; text-align: center; }
-    input[type="text"] { padding: 8px; font-size: 16px; width: 200px; }
-    button { padding: 8px 15px; font-size: 16px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; margin-left: 5px; }
-    button:hover { background: #0056b3; }
-    #stats { margin-top: 10px; font-weight: bold; }
-    #content { background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); font-size: 18px; min-height: 200px; white-space: pre-wrap; }
-    .redacted { background-color: #000; color: #000; padding: 0 2px; border-radius: 2px; user-select: none; }
-    .revealed { background-color: #e2f0d9; color: #276a3c; font-weight: bold; padding: 0 2px; }
-    .common { font-weight: normal; }
-  </style>
+<meta charset="UTF-8">
+<title>Lændrïer Redactle Multiplayer</title>
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<style>
+  :root {
+    --bg: #0b0b0d;
+    --panel: #141416;
+    --panel-2: #1c1c1f;
+    --border: #2a2a2e;
+    --text: #eaeaea;
+    --muted: #9a9a9f;
+    --accent: #22d3c9;
+    --redacted-bg: #3a3a3f;
+    --redacted-text: #d8d8db;
+    --row-hover: #202024;
+    --row-selected: #26262b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: "Segoe UI", Roboto, Arial, sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 20px; border-bottom: 1px solid var(--border); background: #000;
+    flex-wrap: wrap; gap: 10px;
+  }
+  .logo { font-weight: 800; font-style: italic; font-size: 22px; letter-spacing: 0.5px; }
+  .logo span { color: var(--accent); }
+  #new-game-btn {
+    background: var(--accent); color: #002826; border: none; padding: 8px 16px;
+    border-radius: 6px; font-weight: 700; cursor: pointer; font-size: 14px;
+  }
+  #new-game-btn:hover { filter: brightness(1.1); }
+  #mp-status { color: var(--muted); font-size: 13px; }
+  #lobby-link-container { font-size: 13px; color: var(--muted); }
+  #lobby-link { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; }
+
+  .layout { display: flex; gap: 16px; padding: 20px; align-items: flex-start; }
+  #content {
+    flex: 1 1 auto; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 28px; font-size: 19px; line-height: 2;
+    min-height: 400px; white-space: pre-wrap;
+  }
+  #title-banner {
+    font-size: 13px; color: var(--muted); margin-bottom: 14px; letter-spacing: 0.5px;
+  }
+
+  .redacted {
+    display: inline-block; background: var(--redacted-bg); color: var(--redacted-text);
+    border-radius: 4px; padding: 0 6px; margin: 1px 2px; font-family: monospace;
+    font-size: 14px; user-select: none; vertical-align: middle;
+  }
+  .revealed {
+    font-weight: 700; color: var(--text); padding: 0 2px; border-radius: 3px;
+    cursor: pointer;
+  }
+  .revealed.selected { background: var(--accent); color: #002826; }
+  .common { font-weight: 400; color: var(--text); }
+
+  #sidebar {
+    flex: 0 0 340px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; position: sticky; top: 16px;
+  }
+  #sidebar-stats {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 13px; color: var(--muted); margin-bottom: 10px;
+  }
+  #guessForm { display: flex; gap: 6px; margin-bottom: 12px; }
+  #guessInput {
+    flex: 1; padding: 10px; font-size: 15px; background: var(--panel-2);
+    border: 1px solid var(--border); border-radius: 6px; color: var(--text);
+  }
+  #guessInput::placeholder { color: var(--muted); }
+  #guessForm button {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 0 14px; cursor: pointer; font-size: 14px;
+  }
+  #guessForm button:hover { background: var(--row-hover); }
+
+  #guessList { display: flex; flex-direction: column; gap: 2px; max-height: 60vh; overflow-y: auto; }
+  .guess-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 10px; border-radius: 6px; cursor: pointer; font-size: 15px;
+  }
+  .guess-row:hover { background: var(--row-hover); }
+  .guess-row.selected { background: var(--row-selected); outline: 1px solid var(--accent); }
+  .guess-rank { color: var(--muted); font-size: 12px; width: 28px; flex: 0 0 28px; }
+  .guess-word { flex: 1; }
+  .guess-word.correct { color: var(--accent); font-weight: 700; }
+  .guess-count { color: var(--muted); font-size: 14px; }
+
+  #empty-hint { color: var(--muted); font-size: 14px; padding: 10px 4px; }
+
+  @media (max-width: 820px) {
+    .layout { flex-direction: column; }
+    #sidebar { flex: 1 1 auto; width: 100%; position: static; }
+  }
+</style>
 </head>
 <body>
 
-  <h1>Lændrïer Redactle MP</h1>
-
-  <div id="multiplayer-box">
+<header>
+  <div class="logo">LÆNDRÏER <span>REDACTLE</span></div>
+  <div style="display:flex; align-items:center; gap:14px;">
     <span id="mp-status">Multiplayer: Verbinde mit Netzwerk...</span>
-    <div id="lobby-link-container" style="display:none; margin-top: 5px;">
-      Teile diesen Link: <input type="text" id="lobby-link" readonly style="width: 350px;" onclick="this.select()">
+    <div id="lobby-link-container" style="display:none;">
+      Link: <input type="text" id="lobby-link" readonly onclick="this.select()">
     </div>
+    <button id="new-game-btn" onclick="startNewGame()">Neues Spiel (Host)</button>
+  </div>
+</header>
+
+<div class="layout">
+  <div id="content-wrap" style="flex:1 1 auto;">
+    <div id="title-banner">Artikel-Rätsel — errate den Titel, indem du Wörter aus dem Text errätst</div>
+    <div id="content">Warte auf Spielstart...</div>
   </div>
 
-  <div id="controls">
-    <button id="new-game-btn" onclick="startNewGame()">Neues Spiel starten (Host)</button>
-    <br><br>
-    <input type="text" id="guessInput" placeholder="Wort erraten..." onkeydown="if(event.key==='Enter') makeGuess()">
-    <button onclick="makeGuess()">Raten</button>
-    <div id="stats">Versuche: <span id="attemptCount">0</span></div>
+  <div id="sidebar">
+    <div id="sidebar-stats">
+      <span>Versuche: <strong id="attemptCount">0</strong></span>
+    </div>
+    <form id="guessForm" onsubmit="event.preventDefault(); makeGuess();">
+      <input type="text" id="guessInput" placeholder="Wort erraten...">
+      <button type="submit">Raten</button>
+    </form>
+    <div id="guessList"></div>
+    <div id="empty-hint">Noch keine Wörter erraten.</div>
   </div>
+</div>
 
-  <div id="content">Warte auf Spielstart...</div>
+<script>
+  const ARTICLES_URL = "./articles.json";
+  const COMMON_WORDS = new Set(["der", "die", "das", "des", "dem", "den", "ein", "eine", "einer", "eines", "einem", "einen", "und", "oder", "aber", "ist", "sind", "war", "waren", "von", "mit", "in", "im", "auf", "für", "an", "zu", "aus", "bei", "nach", "über", "um", "wie", "als", "auch", "nicht", "es", "er", "sie"]);
 
-  <script>
-    // Statische Artikel-Datenbank statt Live-Wiki-API — muss im selben Ordner
-    // wie diese index.html liegen. Erzeugt/aktualisiert wird sie mit
-    // export-converter.html aus einem Spezial:Exportieren-XML-Export.
-    const ARTICLES_URL = "./articles.json";
-    const COMMON_WORDS = new Set(["der", "die", "das", "des", "dem", "den", "ein", "eine", "einer", "eines", "einem", "einen", "und", "oder", "aber", "ist", "sind", "war", "waren", "von", "mit", "in", "im", "auf", "für", "an", "zu", "aus", "bei", "nach", "über", "um", "wie", "als", "auch", "nicht", "es", "er", "sie"]);
+  let peer, conn;
+  let connections = [];
+  let isHost = false;
+  let rawTokens = [];
+  let guessOrder = [];      // Reihenfolge der geratenen Wörter (älteste zuerst)
+  let guessedSet = new Set();
+  let attempts = 0;
+  let targetTitle = "";
+  let isWon = false;
+  let selectedWord = null;  // aktuell im Text hervorgehobenes Wort
+  let articlesCache = null;
 
-    let peer, conn;
-    let connections = [];
-    let isHost = false;
-    let rawTokens = [];
-    let guessedWords = new Set();
-    let attempts = 0;
-    let targetTitle = "";
-    let isWon = false;
-    let articlesCache = null;
+  const urlParams = new URLSearchParams(window.location.search);
+  const hostId = urlParams.get('host');
 
-    // 1. Multiplayer (PeerJS) Initialisierung
-    const urlParams = new URLSearchParams(window.location.search);
-    const hostId = urlParams.get('host');
+  peer = new Peer();
 
-    peer = new Peer();
+  peer.on('open', (id) => {
+    if (hostId) {
+      document.getElementById("mp-status").innerText = "Verbinde mit Host-Lobby...";
+      document.getElementById("new-game-btn").style.display = "none";
+      conn = peer.connect(hostId);
+      setupConnection(conn);
+    } else {
+      isHost = true;
+      document.getElementById("mp-status").innerText = "Du bist der Host!";
+      const shareUrl = `${window.location.origin}${window.location.pathname}?host=${id}`;
+      document.getElementById("lobby-link").value = shareUrl;
+      document.getElementById("lobby-link-container").style.display = "block";
+    }
+  });
 
-    peer.on('open', (id) => {
-      if (hostId) {
-        document.getElementById("mp-status").innerText = "Verbinde mit Host-Lobby...";
-        document.getElementById("new-game-btn").style.display = "none";
-        conn = peer.connect(hostId);
-        setupConnection(conn);
+  peer.on('connection', (c) => {
+    if (isHost) {
+      connections.push(c);
+      setupConnection(c);
+      setTimeout(() => {
+        c.send({ type: 'INIT', rawTokens, guessOrder, targetTitle, attempts, isWon });
+      }, 500);
+    }
+  });
+
+  function setupConnection(c) {
+    c.on('data', (data) => {
+      if (data.type === 'INIT') {
+        rawTokens = data.rawTokens;
+        guessOrder = data.guessOrder || [];
+        guessedSet = new Set(guessOrder);
+        targetTitle = data.targetTitle;
+        attempts = data.attempts;
+        isWon = data.isWon;
+        selectedWord = null;
+        document.getElementById("attemptCount").innerText = attempts;
+        renderAll();
+      } else if (data.type === 'GUESS') {
+        handleGuess(data.guess, false);
+      } else if (data.type === 'NEW_GAME') {
+        rawTokens = data.rawTokens;
+        targetTitle = data.targetTitle;
+        guessOrder = [];
+        guessedSet = new Set();
+        attempts = 0;
+        isWon = false;
+        selectedWord = null;
+        document.getElementById("attemptCount").innerText = 0;
+        renderAll();
+      }
+    });
+  }
+
+  function broadcast(data) {
+    if (isHost) {
+      connections.forEach(c => c.send(data));
+    } else if (conn) {
+      conn.send(data);
+    }
+  }
+
+  async function loadArticles() {
+    if (articlesCache) return articlesCache;
+    const res = await fetch(ARTICLES_URL, { cache: "no-store" });
+    if (!res.ok) throw new Error(`articles.json konnte nicht geladen werden (Status ${res.status})`);
+    articlesCache = await res.json();
+    if (!Array.isArray(articlesCache) || articlesCache.length === 0) {
+      throw new Error("articles.json ist leer oder ungültig");
+    }
+    return articlesCache;
+  }
+
+  async function startNewGame() {
+    if (!isHost) return;
+    document.getElementById("content").innerText = "Lade zufälligen Artikel...";
+    guessOrder = [];
+    guessedSet = new Set();
+    attempts = 0;
+    isWon = false;
+    selectedWord = null;
+    document.getElementById("attemptCount").innerText = 0;
+
+    try {
+      const articles = await loadArticles();
+      const page = articles[Math.floor(Math.random() * articles.length)];
+      targetTitle = page.title;
+      rawTokens = page.text.match(/[\wÄÖÜäöüß]+|[^\w\s]+|\s+/g) || [];
+
+      renderAll();
+      broadcast({ type: 'NEW_GAME', rawTokens, targetTitle });
+    } catch (e) {
+      document.getElementById("content").innerText =
+        "Fehler beim Laden von articles.json: " + e.message +
+        " — liegt die Datei im selben Ordner wie index.html?";
+    }
+  }
+
+  function makeGuess() {
+    const input = document.getElementById("guessInput");
+    const guess = input.value.trim().toLowerCase();
+    input.value = "";
+    if (!guess || isWon || guessedSet.has(guess)) return;
+    handleGuess(guess, true);
+  }
+
+  function handleGuess(guess, isLocal) {
+    if (guessedSet.has(guess)) return;
+
+    guessedSet.add(guess);
+    guessOrder.push(guess);
+    attempts++;
+    document.getElementById("attemptCount").innerText = attempts;
+    selectedWord = guess;
+
+    if (guess === targetTitle.toLowerCase()) {
+      isWon = true;
+      setTimeout(() => alert(`Glückwunsch! Artikel "${targetTitle}" wurde gelöst!`), 50);
+    }
+
+    renderAll();
+
+    if (isLocal) {
+      broadcast({ type: 'GUESS', guess });
+    }
+  }
+
+  function toggleSelect(word) {
+    selectedWord = (selectedWord === word) ? null : word;
+    renderAll();
+  }
+
+  function countOccurrences(word) {
+    let n = 0;
+    for (const token of rawTokens) {
+      if (token.toLowerCase().trim() === word) n++;
+    }
+    return n;
+  }
+
+  function renderAll() {
+    renderText();
+    renderSidebarList();
+  }
+
+  function renderText() {
+    const container = document.getElementById("content");
+    container.innerHTML = "";
+
+    rawTokens.forEach(token => {
+      const clean = token.toLowerCase().trim();
+      const isWord = /^[\wÄÖÜäöüß]+$/.test(token);
+
+      if (!isWord) {
+        container.appendChild(document.createTextNode(token));
+      } else if (COMMON_WORDS.has(clean)) {
+        const span = document.createElement("span");
+        span.className = "common";
+        span.innerText = token;
+        container.appendChild(span);
+      } else if (guessedSet.has(clean)) {
+        const span = document.createElement("span");
+        span.className = "revealed" + (selectedWord === clean ? " selected" : "");
+        span.innerText = token;
+        span.onclick = () => toggleSelect(clean);
+        container.appendChild(span);
       } else {
-        isHost = true;
-        document.getElementById("mp-status").innerText = "Du bist der Host!";
-        const shareUrl = `${window.location.origin}${window.location.pathname}?host=${id}`;
-        document.getElementById("lobby-link").value = shareUrl;
-        document.getElementById("lobby-link-container").style.display = "block";
+        const span = document.createElement("span");
+        span.className = "redacted";
+        span.innerText = String(clean.length);
+        container.appendChild(span);
       }
     });
+  }
 
-    peer.on('connection', (c) => {
-      if (isHost) {
-        connections.push(c);
-        setupConnection(c);
-        setTimeout(() => {
-          c.send({ type: 'INIT', rawTokens, guessedArray: Array.from(guessedWords), targetTitle, attempts, isWon });
-        }, 500);
-      }
-    });
+  function renderSidebarList() {
+    const list = document.getElementById("guessList");
+    const emptyHint = document.getElementById("empty-hint");
+    list.innerHTML = "";
 
-    function setupConnection(c) {
-      c.on('data', (data) => {
-        if (data.type === 'INIT') {
-          rawTokens = data.rawTokens;
-          guessedWords = new Set(data.guessedArray);
-          targetTitle = data.targetTitle;
-          attempts = data.attempts;
-          isWon = data.isWon;
-          document.getElementById("attemptCount").innerText = attempts;
-          renderText();
-        } else if (data.type === 'GUESS') {
-          handleGuess(data.guess, false);
-        } else if (data.type === 'NEW_GAME') {
-          rawTokens = data.rawTokens;
-          targetTitle = data.targetTitle;
-          guessedWords.clear();
-          attempts = 0;
-          isWon = false;
-          document.getElementById("attemptCount").innerText = 0;
-          renderText();
-        }
-      });
+    if (guessOrder.length === 0) {
+      emptyHint.style.display = "block";
+      return;
     }
+    emptyHint.style.display = "none";
 
-    function broadcast(data) {
-      if (isHost) {
-        connections.forEach(c => c.send(data));
-      } else if (conn) {
-        conn.send(data);
-      }
+    // Neueste zuerst anzeigen, Rang-Nummer bleibt die ursprüngliche Reihenfolge
+    for (let i = guessOrder.length - 1; i >= 0; i--) {
+      const word = guessOrder[i];
+      const rank = i + 1;
+      const count = countOccurrences(word);
+      const isCorrect = word === targetTitle.toLowerCase();
+
+      const row = document.createElement("div");
+      row.className = "guess-row" + (selectedWord === word ? " selected" : "");
+      row.onclick = () => toggleSelect(word);
+
+      row.innerHTML = `
+        <span class="guess-rank">#${rank}</span>
+        <span class="guess-word${isCorrect ? " correct" : ""}">${escapeHtml(word)}${isCorrect ? " 🏆" : ""}</span>
+        <span class="guess-count">${count}</span>
+      `;
+      list.appendChild(row);
     }
+  }
 
-    // 2. Spiel-Logik
-    async function loadArticles() {
-      if (articlesCache) return articlesCache;
-      const res = await fetch(ARTICLES_URL, { cache: "no-store" });
-      if (!res.ok) throw new Error(`articles.json konnte nicht geladen werden (Status ${res.status})`);
-      articlesCache = await res.json();
-      if (!Array.isArray(articlesCache) || articlesCache.length === 0) {
-        throw new Error("articles.json ist leer oder ungültig");
-      }
-      return articlesCache;
-    }
-
-    async function startNewGame() {
-      if (!isHost) return;
-      document.getElementById("content").innerText = "Lade zufälligen Artikel...";
-      guessedWords.clear();
-      attempts = 0;
-      isWon = false;
-      document.getElementById("attemptCount").innerText = attempts;
-
-      try {
-        const articles = await loadArticles();
-        const page = articles[Math.floor(Math.random() * articles.length)];
-        targetTitle = page.title;
-
-        rawTokens = page.text.match(/[\wÄÖÜäöüß]+|[^\w\s]+|\s+/g) || [];
-
-        renderText();
-        broadcast({ type: 'NEW_GAME', rawTokens, targetTitle });
-      } catch (e) {
-        document.getElementById("content").innerText =
-          "Fehler beim Laden von articles.json: " + e.message +
-          " — liegt die Datei im selben Ordner wie index.html?";
-      }
-    }
-
-    function makeGuess() {
-      const input = document.getElementById("guessInput");
-      const guess = input.value.trim().toLowerCase();
-      input.value = "";
-      if (!guess || isWon || guessedWords.has(guess)) return;
-
-      handleGuess(guess, true);
-    }
-
-    function handleGuess(guess, isLocal) {
-      if (guessedWords.has(guess)) return;
-
-      guessedWords.add(guess);
-      attempts++;
-      document.getElementById("attemptCount").innerText = attempts;
-
-      if (guess === targetTitle.toLowerCase()) {
-        isWon = true;
-        alert(`Glückwunsch! Artikel "${targetTitle}" wurde gelöst!`);
-      }
-
-      renderText();
-
-      if (isLocal) {
-        broadcast({ type: 'GUESS', guess });
-      }
-    }
-
-    function renderText() {
-      const container = document.getElementById("content");
-      container.innerHTML = "";
-
-      rawTokens.forEach(token => {
-        const clean = token.toLowerCase().trim();
-        const isWord = /^[\wÄÖÜäöüß]+$/.test(token);
-
-        if (!isWord) {
-          container.appendChild(document.createTextNode(token));
-        } else if (COMMON_WORDS.has(clean)) {
-          const span = document.createElement("span");
-          span.className = "common";
-          span.innerText = token;
-          container.appendChild(span);
-        } else if (guessedWords.has(clean)) {
-          const span = document.createElement("span");
-          span.className = "revealed";
-          span.innerText = token;
-          container.appendChild(span);
-        } else {
-          const span = document.createElement("span");
-          span.className = "redacted";
-          span.innerText = "█".repeat(token.length);
-          container.appendChild(span);
-        }
-      });
-    }
-  </script>
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, c => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+</script>
 </body>
 </html>
