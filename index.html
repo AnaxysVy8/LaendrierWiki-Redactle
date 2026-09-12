@@ -17,6 +17,8 @@
     --redacted-text: #d8d8db;
     --row-hover: #202024;
     --row-selected: #26262b;
+    --hint-bg: #4a1414;
+    --hint-text: #ffb3b3;
   }
   * { box-sizing: border-box; }
   body {
@@ -64,6 +66,7 @@
     font-weight: 700; color: var(--text); padding: 0 2px; border-radius: 3px;
     cursor: pointer;
   }
+  .revealed.hint { background: var(--hint-bg); color: var(--hint-text); }
   .revealed.selected { background: var(--accent); color: #002826; }
   .common { font-weight: 400; color: var(--text); }
 
@@ -75,6 +78,21 @@
     display: flex; justify-content: space-between; align-items: center;
     font-size: 13px; color: var(--muted); margin-bottom: 10px;
   }
+
+  #hint-buttons { display: flex; gap: 6px; margin-bottom: 10px; }
+  #hint-buttons button {
+    flex: 1; background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 6px; cursor: pointer; font-size: 13px;
+  }
+  #hint-buttons button:hover:not(:disabled) { background: var(--row-hover); }
+  #hint-buttons button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  #hint-banner {
+    display: none; background: var(--hint-bg); color: var(--hint-text);
+    border-radius: 6px; padding: 10px 12px; font-size: 13px; margin-bottom: 10px;
+    font-style: italic;
+  }
+
   #guessForm { display: flex; gap: 6px; margin-bottom: 12px; }
   #guessInput {
     flex: 1; padding: 10px; font-size: 15px; background: var(--panel-2);
@@ -87,17 +105,20 @@
   }
   #guessForm button:hover { background: var(--row-hover); }
 
-  #guessList { display: flex; flex-direction: column; gap: 2px; max-height: 60vh; overflow-y: auto; }
+  #guessList { display: flex; flex-direction: column; gap: 2px; max-height: 55vh; overflow-y: auto; }
   .guess-row {
     display: flex; align-items: center; justify-content: space-between;
     padding: 10px 10px; border-radius: 6px; cursor: pointer; font-size: 15px;
   }
   .guess-row:hover { background: var(--row-hover); }
+  .guess-row.hint { background: var(--hint-bg); color: var(--hint-text); }
   .guess-row.selected { background: var(--row-selected); outline: 1px solid var(--accent); }
   .guess-rank { color: var(--muted); font-size: 12px; width: 28px; flex: 0 0 28px; }
+  .guess-row.hint .guess-rank { color: var(--hint-text); opacity: 0.7; }
   .guess-word { flex: 1; }
   .guess-word.correct { color: var(--accent); font-weight: 700; }
   .guess-count { color: var(--muted); font-size: 14px; }
+  .guess-row.hint .guess-count { color: var(--hint-text); opacity: 0.8; }
 
   #empty-hint { color: var(--muted); font-size: 14px; padding: 10px 4px; }
 
@@ -131,6 +152,13 @@
     <div id="sidebar-stats">
       <span>Versuche: <strong id="attemptCount">0</strong></span>
     </div>
+
+    <div id="hint-buttons">
+      <button id="hintSentenceBtn" onclick="useSentenceHint()">💡 Hinweissatz (<span id="sentenceHintsLeftEl">1</span>)</button>
+      <button id="hintRevealBtn" onclick="useRevealHint()">🔎 Wort aufdecken (<span id="revealHintsLeftEl">3</span>)</button>
+    </div>
+    <div id="hint-banner"></div>
+
     <form id="guessForm" onsubmit="event.preventDefault(); makeGuess();">
       <input type="text" id="guessInput" placeholder="Wort erraten..." oninput="this.value = this.value.replace(/\s+/g, '')">
       <button type="submit">Raten</button>
@@ -142,12 +170,10 @@
 
 <script>
   // Unicode-fähig: erkennt Buchstaben aus ALLEN Sprachen als "Wort"
-  // (behebt den Bug, dass æ/ï in "Lændrïer" das Wort mitten durchtrennt haben)
   const TOKEN_REGEX = /[\p{L}\p{N}_]+|[^\p{L}\p{N}\s]+|\s+/gu;
   const WORD_REGEX = /^[\p{L}\p{N}_]+$/u;
 
-  // Erlaubt alternative Schreibweisen beim Raten (z.B. "Laendrier" statt
-  // "Lændrïer"). Wird NUR zum Vergleichen benutzt, die Anzeige bleibt original.
+  // Erlaubt alternative Schreibweisen beim Raten (z.B. "Laendrier" statt "Lændrïer")
   function normalize(str) {
     return str
       .toLowerCase()
@@ -166,18 +192,27 @@
 
   const ARTICLES_URL = "./articles.json";
   const COMMON_WORDS = new Set(["der", "die", "das", "des", "dem", "den", "ein", "eine", "einer", "eines", "einem", "einen", "und", "oder", "aber", "ist", "sind", "war", "waren", "von", "mit", "in", "im", "auf", "für", "an", "zu", "aus", "bei", "nach", "über", "um", "wie", "als", "auch", "nicht", "es", "er", "sie"]);
+  const NO_HINT_TEXT = "Für diesen Artikel wurde noch kein Hinweissatz hinterlegt.";
+  const SENTENCE_HINTS_PER_ROUND = 1;
+  const REVEAL_HINTS_PER_ROUND = 3;
 
   let peer, conn;
   let connections = [];
   let isHost = false;
   let rawTokens = [];
-  let guessOrder = [];        // [{word, norm}] Reihenfolge der geratenen Wörter (älteste zuerst)
-  let guessedNorms = new Set(); // normalisierte Formen, für schnellen Abgleich/Duplikat-Check
+  let guessOrder = [];          // [{word, norm, hint}] Reihenfolge der geratenen/aufgedeckten Wörter
+  let guessedNorms = new Set(); // normalisierte Formen, für schnellen Abgleich
+  let hintNorms = new Set();    // normalisierte Formen, die per Hinweis (nicht geraten) aufgedeckt wurden
   let attempts = 0;
   let targetTitle = "";
   let isWon = false;
-  let selectedWord = null;   // aktuell hervorgehobene NORMALISIERTE Form
+  let selectedWord = null;      // aktuell hervorgehobene NORMALISIERTE Form
   let articlesCache = null;
+
+  let articleHint = "";         // Hinweissatz des aktuellen Artikels (lokal bekannt, aber erst nach Nutzung angezeigt)
+  let hintRevealed = false;     // ob der Hinweissatz für ALLE sichtbar gemacht wurde
+  let sentenceHintsLeft = SENTENCE_HINTS_PER_ROUND; // NUR lokal für diesen Spieler
+  let revealHintsLeft = REVEAL_HINTS_PER_ROUND;     // NUR lokal für diesen Spieler
 
   const urlParams = new URLSearchParams(window.location.search);
   const hostId = urlParams.get('host');
@@ -204,7 +239,10 @@
       connections.push(c);
       setupConnection(c);
       setTimeout(() => {
-        c.send({ type: 'INIT', rawTokens, guessOrder, targetTitle, attempts, isWon });
+        c.send({
+          type: 'INIT', rawTokens, guessOrder, targetTitle, attempts, isWon,
+          hint: articleHint, hintRevealed
+        });
       }, 500);
     }
   });
@@ -215,22 +253,38 @@
         rawTokens = data.rawTokens;
         guessOrder = data.guessOrder || [];
         guessedNorms = new Set(guessOrder.map(g => g.norm));
+        hintNorms = new Set(guessOrder.filter(g => g.hint).map(g => g.norm));
         targetTitle = data.targetTitle;
         attempts = data.attempts;
         isWon = data.isWon;
+        articleHint = data.hint || "";
+        hintRevealed = !!data.hintRevealed;
         selectedWord = null;
+        // Eigene Hinweis-Kontingente sind IMMER frisch, unabhängig vom Host-Stand
+        sentenceHintsLeft = SENTENCE_HINTS_PER_ROUND;
+        revealHintsLeft = REVEAL_HINTS_PER_ROUND;
         document.getElementById("attemptCount").innerText = attempts;
         renderAll();
       } else if (data.type === 'GUESS') {
         handleGuess(data.guess, false);
+      } else if (data.type === 'HINT_SENTENCE') {
+        hintRevealed = true;
+        renderHintBanner();
+      } else if (data.type === 'HINT_REVEAL') {
+        applyHintReveal(data.word, data.norm);
       } else if (data.type === 'NEW_GAME') {
         rawTokens = data.rawTokens;
         targetTitle = data.targetTitle;
+        articleHint = data.hint || "";
+        hintRevealed = false;
         guessOrder = [];
         guessedNorms = new Set();
+        hintNorms = new Set();
         attempts = 0;
         isWon = false;
         selectedWord = null;
+        sentenceHintsLeft = SENTENCE_HINTS_PER_ROUND;
+        revealHintsLeft = REVEAL_HINTS_PER_ROUND;
         document.getElementById("attemptCount").innerText = 0;
         renderAll();
       }
@@ -261,19 +315,24 @@
     document.getElementById("content").innerText = "Lade zufälligen Artikel...";
     guessOrder = [];
     guessedNorms = new Set();
+    hintNorms = new Set();
     attempts = 0;
     isWon = false;
     selectedWord = null;
+    hintRevealed = false;
+    sentenceHintsLeft = SENTENCE_HINTS_PER_ROUND;
+    revealHintsLeft = REVEAL_HINTS_PER_ROUND;
     document.getElementById("attemptCount").innerText = 0;
 
     try {
       const articles = await loadArticles();
       const page = articles[Math.floor(Math.random() * articles.length)];
       targetTitle = page.title;
+      articleHint = (page.hint || "").trim();
       rawTokens = page.text.match(TOKEN_REGEX) || [];
 
       renderAll();
-      broadcast({ type: 'NEW_GAME', rawTokens, targetTitle });
+      broadcast({ type: 'NEW_GAME', rawTokens, targetTitle, hint: articleHint });
     } catch (e) {
       document.getElementById("content").innerText =
         "Fehler beim Laden von articles.json: " + e.message +
@@ -289,6 +348,98 @@
     if (guessedNorms.has(normalize(guess))) return;
     handleGuess(guess, true);
   }
+
+  function handleGuess(guess, isLocal) {
+    const norm = normalize(guess);
+    if (guessedNorms.has(norm)) return;
+
+    guessedNorms.add(norm);
+    guessOrder.push({ word: guess, norm, hint: false });
+    attempts++;
+    document.getElementById("attemptCount").innerText = attempts;
+    selectedWord = norm;
+
+    if (!isWon && isTitleFullyGuessed()) {
+      isWon = true;
+      setTimeout(() => alert(`Glückwunsch! Artikel "${targetTitle}" wurde gelöst!`), 50);
+    }
+
+    renderAll();
+
+    if (isLocal) {
+      broadcast({ type: 'GUESS', guess });
+    }
+  }
+
+  // ---- Hinweise ----
+
+  function useSentenceHint() {
+    if (sentenceHintsLeft <= 0 || !targetTitle) return;
+    sentenceHintsLeft--;
+    hintRevealed = true;
+    updateHintButtons();
+    renderHintBanner();
+    broadcast({ type: 'HINT_SENTENCE' });
+  }
+
+  function useRevealHint() {
+    if (revealHintsLeft <= 0 || isWon || !targetTitle) return;
+
+    const titleNorms = titleSignificantNorms();
+    const candidates = new Map(); // norm -> Beispiel-Wortform
+    rawTokens.forEach(token => {
+      if (!WORD_REGEX.test(token)) return;
+      const lower = token.toLowerCase();
+      if (COMMON_WORDS.has(lower)) return;
+      const norm = normalize(token);
+      if (titleNorms.has(norm)) return;
+      if (guessedNorms.has(norm)) return;
+      if (!candidates.has(norm)) candidates.set(norm, lower);
+    });
+
+    if (candidates.size === 0) {
+      alert("Keine weiteren Wörter zum Aufdecken übrig (außerhalb des Titels).");
+      return;
+    }
+
+    const norms = Array.from(candidates.keys());
+    const chosenNorm = norms[Math.floor(Math.random() * norms.length)];
+    const word = candidates.get(chosenNorm);
+
+    revealHintsLeft--;
+    updateHintButtons();
+    applyHintReveal(word, chosenNorm);
+    broadcast({ type: 'HINT_REVEAL', word, norm: chosenNorm });
+  }
+
+  function applyHintReveal(word, norm) {
+    if (guessedNorms.has(norm)) return;
+    guessedNorms.add(norm);
+    hintNorms.add(norm);
+    guessOrder.push({ word, norm, hint: true });
+    selectedWord = norm;
+    renderAll();
+  }
+
+  function renderHintBanner() {
+    const banner = document.getElementById("hint-banner");
+    if (!hintRevealed) {
+      banner.style.display = "none";
+      banner.innerText = "";
+      return;
+    }
+    banner.style.display = "block";
+    banner.innerText = "💬 Hinweis: " + (articleHint || NO_HINT_TEXT);
+  }
+
+  function updateHintButtons() {
+    document.getElementById("sentenceHintsLeftEl").innerText = sentenceHintsLeft;
+    document.getElementById("revealHintsLeftEl").innerText = revealHintsLeft;
+    document.getElementById("hintSentenceBtn").disabled = sentenceHintsLeft <= 0 || !targetTitle;
+    document.getElementById("hintRevealBtn").disabled = revealHintsLeft <= 0 || isWon || !targetTitle;
+  }
+
+  // ---- Titel / Sieg ----
 
   function titleSignificantNorms() {
     const titleTokens = targetTitle.match(TOKEN_REGEX) || [];
@@ -310,28 +461,6 @@
     return true;
   }
 
-  function handleGuess(guess, isLocal) {
-    const norm = normalize(guess);
-    if (guessedNorms.has(norm)) return;
-
-    guessedNorms.add(norm);
-    guessOrder.push({ word: guess, norm });
-    attempts++;
-    document.getElementById("attemptCount").innerText = attempts;
-    selectedWord = norm;
-
-    if (!isWon && isTitleFullyGuessed()) {
-      isWon = true;
-      setTimeout(() => alert(`Glückwunsch! Artikel "${targetTitle}" wurde gelöst!`), 50);
-    }
-
-    renderAll();
-
-    if (isLocal) {
-      broadcast({ type: 'GUESS', guess });
-    }
-  }
-
   function toggleSelect(norm) {
     selectedWord = (selectedWord === norm) ? null : norm;
     renderAll();
@@ -349,9 +478,10 @@
     renderTitle();
     renderText();
     renderSidebarList();
+    renderHintBanner();
+    updateHintButtons();
   }
 
-  // Baut für ein Token das passende Element (redigiert/aufgedeckt/häufig/Satzzeichen)
   function buildWordSpan(token) {
     const isWord = WORD_REGEX.test(token);
     if (!isWord) {
@@ -369,7 +499,8 @@
     }
     if (isWon || guessedNorms.has(norm)) {
       const span = document.createElement("span");
-      span.className = "revealed" + (selectedWord === norm ? " selected" : "");
+      const isHintWord = hintNorms.has(norm);
+      span.className = "revealed" + (isHintWord ? " hint" : "") + (selectedWord === norm ? " selected" : "");
       span.innerText = token;
       span.onclick = () => toggleSelect(norm);
       return span;
@@ -408,20 +539,19 @@
     }
     emptyHint.style.display = "none";
 
-    // Neueste zuerst anzeigen, Rang-Nummer bleibt die ursprüngliche Reihenfolge
     for (let i = guessOrder.length - 1; i >= 0; i--) {
-      const { word, norm } = guessOrder[i];
+      const { word, norm, hint } = guessOrder[i];
       const rank = i + 1;
       const count = countOccurrences(norm);
-      const isCorrect = norm === normalize(targetTitle);
+      const isCorrect = norm === normalize(targetTitle) || titleSignificantNorms().has(norm);
 
       const row = document.createElement("div");
-      row.className = "guess-row" + (selectedWord === norm ? " selected" : "");
+      row.className = "guess-row" + (hint ? " hint" : "") + (selectedWord === norm ? " selected" : "");
       row.onclick = () => toggleSelect(norm);
 
       row.innerHTML = `
         <span class="guess-rank">#${rank}</span>
-        <span class="guess-word${isCorrect ? " correct" : ""}">${escapeHtml(word)}${isCorrect ? " 🏆" : ""}</span>
+        <span class="guess-word${isCorrect ? " correct" : ""}">${escapeHtml(word)}${hint ? " 🔎" : ""}</span>
         <span class="guess-count">${count}</span>
       `;
       list.appendChild(row);
@@ -433,6 +563,8 @@
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
     }[c]));
   }
+
+  updateHintButtons();
 </script>
 </body>
 </html>

@@ -141,28 +141,42 @@ function updatePageList() {
 
   pageList.innerHTML = "";
   relevant.forEach((p, idx) => {
+    const row = document.createElement("div");
+    row.style.padding = "6px 0";
+    row.style.borderBottom = "1px solid #eee";
+
     const label = document.createElement("label");
     label.className = "page-item";
+    label.style.padding = "0";
     label.innerHTML = `<input type="checkbox" data-title="${encodeURIComponent(p.title)}" checked> ${p.title} <span class="size">${p.rawText.length} Zeichen</span>`;
-    pageList.appendChild(label);
+    row.appendChild(label);
+
+    const hintInput = document.createElement("input");
+    hintInput.type = "text";
+    hintInput.placeholder = "Hinweissatz (optional) — wird im Spiel als Tipp gezeigt";
+    hintInput.dataset.hintFor = encodeURIComponent(p.title);
+    hintInput.style.cssText = "width:100%; margin-top:4px; padding:5px 8px; font-size:13px; border:1px solid #ddd; border-radius:4px;";
+    row.appendChild(hintInput);
+
+    pageList.appendChild(row);
   });
 
-  pageList.querySelectorAll("input").forEach(cb => cb.addEventListener("change", updateSummary));
+  pageList.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.addEventListener("change", updateSummary));
   updateSummary();
 }
 
 function updateSummary() {
-  const total = pageList.querySelectorAll("input").length;
-  const checked = pageList.querySelectorAll("input:checked").length;
+  const total = pageList.querySelectorAll('input[type="checkbox"]').length;
+  const checked = pageList.querySelectorAll('input[type="checkbox"]:checked').length;
   summaryEl.textContent = `${checked} von ${total} Seiten ausgewählt.`;
 }
 
 document.getElementById("selectAllBtn").addEventListener("click", () => {
-  pageList.querySelectorAll("input").forEach(cb => cb.checked = true);
+  pageList.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
   updateSummary();
 });
 document.getElementById("selectNoneBtn").addEventListener("click", () => {
-  pageList.querySelectorAll("input").forEach(cb => cb.checked = false);
+  pageList.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
   updateSummary();
 });
 
@@ -271,12 +285,24 @@ function wikitextToPlain(raw) {
 
 generateBtn.addEventListener("click", () => {
   const checkedTitles = new Set(
-    Array.from(pageList.querySelectorAll("input:checked")).map(cb => decodeURIComponent(cb.dataset.title))
+    Array.from(pageList.querySelectorAll('input[type="checkbox"]:checked')).map(cb => decodeURIComponent(cb.dataset.title))
   );
+
+  const hintsByTitle = new Map();
+  pageList.querySelectorAll("input[data-hint-for]").forEach(inp => {
+    const title = decodeURIComponent(inp.dataset.hintFor);
+    const val = inp.value.trim();
+    if (val) hintsByTitle.set(title, val);
+  });
 
   const articles = allPages
     .filter(p => checkedTitles.has(p.title))
-    .map(p => ({ title: p.title, text: wikitextToPlain(p.rawText) }))
+    .map(p => {
+      const article = { title: p.title, text: wikitextToPlain(p.rawText) };
+      const hint = hintsByTitle.get(p.title);
+      if (hint) article.hint = hint;
+      return article;
+    })
     .filter(a => a.text.length >= 30);
 
   generatedJson = JSON.stringify(articles, null, 2);
