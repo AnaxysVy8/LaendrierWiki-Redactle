@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Lændrïer-Wiki Export → Redactle-Konverter</title>
+<style>
+  body { font-family: sans-serif; max-width: 900px; margin: 20px auto; padding: 0 20px; line-height: 1.5; background: #f4f4f9; color: #222; }
+  h1 { font-size: 22px; }
+  .box { background: #fff; border-radius: 8px; padding: 18px; margin-bottom: 18px; box-shadow: 0 2px 5px rgba(0,0,0,0.08); }
+  button { padding: 8px 16px; font-size: 15px; cursor: pointer; background: #007bff; color: #fff; border: none; border-radius: 4px; }
+  button:disabled { background: #aaa; cursor: not-allowed; }
+  button:hover:not(:disabled) { background: #0056b3; }
+  label.ns-item, label.page-item { display: block; padding: 3px 0; }
+  .page-item span.size { color: #888; font-size: 12px; margin-left: 6px; }
+  #pageList { max-height: 320px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; padding: 8px; margin-top: 8px; }
+  .muted { color: #666; font-size: 14px; }
+  #summary { font-weight: bold; margin-top: 10px; }
+  textarea#preview { width: 100%; height: 140px; font-family: monospace; font-size: 12px; }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 8px; }
+  .toolbar button { background: #6c757d; }
+  .toolbar button:hover { background: #545b62; }
+</style>
+</head>
+<body>
+
+<h1>🧩 Lændrïer-Wiki → Redactle-Konverter</h1>
+<p class="muted">
+  Wandelt eine XML-Datei aus <strong>Spezial:Exportieren</strong> in eine <code>articles.json</code>-Datei um,
+  die das Redactle-Spiel (<code>index.html</code>) direkt lädt. Läuft komplett lokal im Browser —
+  es wird nichts hochgeladen.
+</p>
+
+<div class="box">
+  <strong>1. XML-Datei auswählen</strong><br><br>
+  <input type="file" id="fileInput" accept=".xml">
+  <div id="fileStatus" class="muted" style="margin-top:8px;"></div>
+</div>
+
+<div class="box" id="nsBox" style="display:none;">
+  <strong>2. Namensräume auswählen</strong>
+  <p class="muted">Vorausgewählt: Hauptartikel-Namensraum + eure eigenen Lændrïer-Story-Namensräume. Diskussionsseiten, Vorlagen, Kategorien etc. sind absichtlich abgewählt.</p>
+  <div id="nsList"></div>
+</div>
+
+<div class="box" id="pageBox" style="display:none;">
+  <strong>3. Einzelne Seiten aus- oder abwählen</strong>
+  <p class="muted">Z.B. Sprachvarianten (/en, /de) oder reine Listen-Seiten kannst du hier rausnehmen, falls gewünscht.</p>
+  <div class="toolbar">
+    <button id="selectAllBtn">Alle auswählen</button>
+    <button id="selectNoneBtn">Keine auswählen</button>
+  </div>
+  <div id="pageList"></div>
+  <div id="summary"></div>
+</div>
+
+<div class="box" id="generateBox" style="display:none;">
+  <strong>4. JSON erzeugen &amp; herunterladen</strong><br><br>
+  <button id="generateBtn">articles.json erzeugen</button>
+  <button id="downloadBtn" disabled>⬇️ articles.json herunterladen</button>
+  <div id="genStatus" class="muted" style="margin-top:8px;"></div>
+  <textarea id="preview" readonly placeholder="Vorschau erscheint hier nach der Erzeugung..." style="margin-top:10px; display:none;"></textarea>
+</div>
+
+<script>
+let xmlDoc = null;
+let allPages = []; // {title, ns, text, redirect}
+let generatedJson = null;
+
+const fileInput = document.getElementById("fileInput");
+const fileStatus = document.getElementById("fileStatus");
+const nsBox = document.getElementById("nsBox");
+const nsList = document.getElementById("nsList");
+const pageBox = document.getElementById("pageBox");
+const pageList = document.getElementById("pageList");
+const summaryEl = document.getElementById("summary");
+const generateBox = document.getElementById("generateBox");
+const generateBtn = document.getElementById("generateBtn");
+const downloadBtn = document.getElementById("downloadBtn");
+const genStatus = document.getElementById("genStatus");
+const preview = document.getElementById("preview");
+
+fileInput.addEventListener("change", async () => {
+  const file = fileInput.files[0];
+  if (!file) return;
+  fileStatus.textContent = "Lese Datei ein...";
+  const text = await file.text();
+  const parser = new DOMParser();
+  xmlDoc = parser.parseFromString(text, "text/xml");
+
+  if (xmlDoc.querySelector("parsererror")) {
+    fileStatus.textContent = "⚠️ Konnte die XML-Datei nicht lesen. Ist es wirklich ein MediaWiki-Export?";
+    return;
+  }
+
+  const nsNodes = Array.from(xmlDoc.querySelectorAll("siteinfo > namespaces > namespace"));
+  const namespaces = nsNodes.map(n => ({
+    id: parseInt(n.getAttribute("key"), 10),
+    name: n.textContent.trim() || "(Hauptnamensraum)"
+  }));
+
+  const pageNodes = Array.from(xmlDoc.querySelectorAll("page"));
+  allPages = pageNodes.map(p => {
+    const title = p.querySelector("title")?.textContent || "";
+    const ns = parseInt(p.querySelector("ns")?.textContent || "0", 10);
+    const isRedirect = !!p.querySelector("redirect");
+    const revs = p.querySelectorAll("revision");
+    const lastRev = revs[revs.length - 1];
+    const rawText = lastRev?.querySelector("text")?.textContent || "";
+    return { title, ns, redirect: isRedirect, rawText };
+  });
+
+  fileStatus.textContent = `✅ ${allPages.length} Seite(n) gefunden.`;
+
+  renderNamespaces(namespaces);
+  nsBox.style.display = "block";
+});
+
+function renderNamespaces(namespaces) {
+  nsList.innerHTML = "";
+  namespaces.forEach(ns => {
+    const defaultChecked = ns.id === 0 || (ns.id >= 3000 && ns.id % 2 === 0);
+    const label = document.createElement("label");
+    label.className = "ns-item";
+    label.innerHTML = `<input type="checkbox" data-nsid="${ns.id}" ${defaultChecked ? "checked" : ""}> ${ns.name} <span class="muted">(ns ${ns.id})</span>`;
+    nsList.appendChild(label);
+  });
+
+  nsList.querySelectorAll("input").forEach(cb => cb.addEventListener("change", updatePageList));
+  updatePageList();
+  pageBox.style.display = "block";
+  generateBox.style.display = "block";
+}
+
+function selectedNamespaceIds() {
+  return Array.from(nsList.querySelectorAll("input:checked")).map(cb => parseInt(cb.dataset.nsid, 10));
+}
+
+function updatePageList() {
+  const activeNs = new Set(selectedNamespaceIds());
+  const relevant = allPages.filter(p => activeNs.has(p.ns) && !p.redirect);
+
+  pageList.innerHTML = "";
+  relevant.forEach((p, idx) => {
+    const label = document.createElement("label");
+    label.className = "page-item";
+    label.innerHTML = `<input type="checkbox" data-title="${encodeURIComponent(p.title)}" checked> ${p.title} <span class="size">${p.rawText.length} Zeichen</span>`;
+    pageList.appendChild(label);
+  });
+
+  pageList.querySelectorAll("input").forEach(cb => cb.addEventListener("change", updateSummary));
+  updateSummary();
+}
+
+function updateSummary() {
+  const total = pageList.querySelectorAll("input").length;
+  const checked = pageList.querySelectorAll("input:checked").length;
+  summaryEl.textContent = `${checked} von ${total} Seiten ausgewählt.`;
+}
+
+document.getElementById("selectAllBtn").addEventListener("click", () => {
+  pageList.querySelectorAll("input").forEach(cb => cb.checked = true);
+  updateSummary();
+});
+document.getElementById("selectNoneBtn").addEventListener("click", () => {
+  pageList.querySelectorAll("input").forEach(cb => cb.checked = false);
+  updateSummary();
+});
+
+// ---- Wikitext -> Klartext Konvertierung ----
+
+function removeBalanced(text, openTok, closeTok) {
+  let out = "";
+  let depth = 0;
+  let start = 0;
+  let i = 0;
+  const ol = openTok.length, cl = closeTok.length;
+  while (i < text.length) {
+    if (text.substr(i, ol) === openTok) {
+      if (depth === 0) out += text.slice(start, i);
+      depth++;
+      i += ol;
+    } else if (text.substr(i, cl) === closeTok && depth > 0) {
+      depth--;
+      i += cl;
+      if (depth === 0) start = i;
+    } else {
+      i++;
+    }
+  }
+  if (depth === 0) out += text.slice(start);
+  return out;
+}
+
+function stripPrefixedLinks(text, prefixes) {
+  let out = "";
+  let i = 0;
+  const n = text.length;
+  while (i < n) {
+    if (text.substr(i, 2) === "[[") {
+      let depth = 1;
+      let j = i + 2;
+      while (j < n && depth > 0) {
+        if (text.substr(j, 2) === "[[") { depth++; j += 2; }
+        else if (text.substr(j, 2) === "]]") { depth--; j += 2; }
+        else j++;
+      }
+      const inner = text.slice(i + 2, j - 2);
+      const firstSeg = inner.split("|")[0].trim().toLowerCase();
+      if (prefixes.some(p => firstSeg.startsWith(p))) {
+        i = j;
+        continue;
+      } else {
+        out += "[[";
+        i += 2;
+      }
+    } else {
+      out += text[i];
+      i++;
+    }
+  }
+  return out;
+}
+
+function wikitextToPlain(raw) {
+  if (!raw) return "";
+  let text = raw;
+
+  // Kommentare
+  text = text.replace(/<!--[\s\S]*?-->/g, "");
+  // ref-Tags
+  text = text.replace(/<ref[^>]*\/>/g, "");
+  text = text.replace(/<ref[^>]*>[\s\S]*?<\/ref>/g, "");
+  // nowiki-Tags entfernen (Inhalt behalten)
+  text = text.replace(/<\/?nowiki[^>]*>/g, "");
+  // Templates {{...}} (balanciert, auch verschachtelt)
+  text = removeBalanced(text, "{{", "}}");
+  // Tabellen {|...|}
+  text = removeBalanced(text, "{|", "|}");
+  // Datei/Kategorie-Links komplett entfernen
+  text = stripPrefixedLinks(text, ["datei:", "file:", "bild:", "image:", "kategorie:", "category:"]);
+  // normale Wikilinks [[Ziel|Anzeige]] -> Anzeige ; [[Ziel]] -> Ziel
+  let prev;
+  do {
+    prev = text;
+    text = text.replace(/\[\[([^\[\]]+)\]\]/g, (m, inner) => {
+      const parts = inner.split("|");
+      return parts.length > 1 ? parts[parts.length - 1] : parts[0];
+    });
+  } while (text !== prev);
+  // externe Links [http://url Text] -> Text ; [http://url] -> ""
+  text = text.replace(/\[https?:\/\/\S+\s+([^\]]+)\]/g, "$1");
+  text = text.replace(/\[https?:\/\/\S+\]/g, "");
+  // fett/kursiv
+  text = text.replaceAll("'''''", "").replaceAll("'''", "").replaceAll("''", "");
+  // Überschriften == Text == -> Text
+  text = text.replace(/^=+\s*(.*?)\s*=+\s*$/gm, "$1");
+  // Magic words wie __NOTOC__
+  text = text.replace(/__[A-ZÄÖÜ]+__/g, "");
+  // verbleibende HTML-Tags
+  text = text.replace(/<[^>]+>/g, " ");
+  // Entities
+  text = text.replaceAll("&nbsp;", " ").replaceAll("&amp;", "&")
+             .replaceAll("&quot;", '"').replaceAll("&lt;", "<").replaceAll("&gt;", ">");
+  // Listenzeichen am Zeilenanfang
+  text = text.replace(/^[\*#:;]+\s*/gm, "");
+  // Whitespace normalisieren
+  text = text.replace(/[ \t]+/g, " ");
+  text = text.replace(/\n{3,}/g, "\n\n");
+  return text.trim();
+}
+
+generateBtn.addEventListener("click", () => {
+  const checkedTitles = new Set(
+    Array.from(pageList.querySelectorAll("input:checked")).map(cb => decodeURIComponent(cb.dataset.title))
+  );
+
+  const articles = allPages
+    .filter(p => checkedTitles.has(p.title))
+    .map(p => ({ title: p.title, text: wikitextToPlain(p.rawText) }))
+    .filter(a => a.text.length >= 30);
+
+  generatedJson = JSON.stringify(articles, null, 2);
+  genStatus.textContent = `✅ ${articles.length} Artikel erzeugt (${(generatedJson.length / 1024).toFixed(1)} KB).`;
+  preview.style.display = "block";
+  preview.value = generatedJson.slice(0, 3000) + (generatedJson.length > 3000 ? "\n\n… (gekürzt)" : "");
+  downloadBtn.disabled = false;
+});
+
+downloadBtn.addEventListener("click", () => {
+  const blob = new Blob([generatedJson], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "articles.json";
+  a.click();
+  URL.revokeObjectURL(url);
+});
+</script>
+
+</body>
+</html>

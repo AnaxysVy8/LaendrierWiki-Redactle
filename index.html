@@ -13,7 +13,7 @@
     button { padding: 8px 15px; font-size: 16px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; margin-left: 5px; }
     button:hover { background: #0056b3; }
     #stats { margin-top: 10px; font-weight: bold; }
-    #content { background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); font-size: 18px; min-height: 200px; }
+    #content { background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); font-size: 18px; min-height: 200px; white-space: pre-wrap; }
     .redacted { background-color: #000; color: #000; padding: 0 2px; border-radius: 2px; user-select: none; }
     .revealed { background-color: #e2f0d9; color: #276a3c; font-weight: bold; padding: 0 2px; }
     .common { font-weight: normal; }
@@ -22,7 +22,7 @@
 <body>
 
   <h1>Lændrïer Redactle MP</h1>
-  
+
   <div id="multiplayer-box">
     <span id="mp-status">Multiplayer: Verbinde mit Netzwerk...</span>
     <div id="lobby-link-container" style="display:none; margin-top: 5px;">
@@ -41,10 +41,10 @@
   <div id="content">Warte auf Spielstart...</div>
 
   <script>
-    // Zeigt auf den Cloudflare-Worker-Proxy (siehe worker.js), NICHT direkt
-    // auf die Wiki-API — der Worker übernimmt den Login fürs private Wiki.
-    // Eigene *.workers.dev URL hier eintragen, ohne Slash am Ende:
-    const PROXY_URL = "https://twilight-art-b7f4.hergert-ryan2008.workers.dev";
+    // Statische Artikel-Datenbank statt Live-Wiki-API — muss im selben Ordner
+    // wie diese index.html liegen. Erzeugt/aktualisiert wird sie mit
+    // export-converter.html aus einem Spezial:Exportieren-XML-Export.
+    const ARTICLES_URL = "./articles.json";
     const COMMON_WORDS = new Set(["der", "die", "das", "des", "dem", "den", "ein", "eine", "einer", "eines", "einem", "einen", "und", "oder", "aber", "ist", "sind", "war", "waren", "von", "mit", "in", "im", "auf", "für", "an", "zu", "aus", "bei", "nach", "über", "um", "wie", "als", "auch", "nicht", "es", "er", "sie"]);
 
     let peer, conn;
@@ -55,6 +55,7 @@
     let attempts = 0;
     let targetTitle = "";
     let isWon = false;
+    let articlesCache = null;
 
     // 1. Multiplayer (PeerJS) Initialisierung
     const urlParams = new URLSearchParams(window.location.search);
@@ -64,13 +65,11 @@
 
     peer.on('open', (id) => {
       if (hostId) {
-        // Mit Host verbinden
         document.getElementById("mp-status").innerText = "Verbinde mit Host-Lobby...";
         document.getElementById("new-game-btn").style.display = "none";
         conn = peer.connect(hostId);
         setupConnection(conn);
       } else {
-        // Host sein
         isHost = true;
         document.getElementById("mp-status").innerText = "Du bist der Host!";
         const shareUrl = `${window.location.origin}${window.location.pathname}?host=${id}`;
@@ -83,7 +82,6 @@
       if (isHost) {
         connections.push(c);
         setupConnection(c);
-        // Sende dem neuen Spieler den aktuellen Spielstand
         setTimeout(() => {
           c.send({ type: 'INIT', rawTokens, guessedArray: Array.from(guessedWords), targetTitle, attempts, isWon });
         }, 500);
@@ -123,6 +121,17 @@
     }
 
     // 2. Spiel-Logik
+    async function loadArticles() {
+      if (articlesCache) return articlesCache;
+      const res = await fetch(ARTICLES_URL, { cache: "no-store" });
+      if (!res.ok) throw new Error(`articles.json konnte nicht geladen werden (Status ${res.status})`);
+      articlesCache = await res.json();
+      if (!Array.isArray(articlesCache) || articlesCache.length === 0) {
+        throw new Error("articles.json ist leer oder ungültig");
+      }
+      return articlesCache;
+    }
+
     async function startNewGame() {
       if (!isHost) return;
       document.getElementById("content").innerText = "Lade zufälligen Artikel...";
@@ -132,22 +141,18 @@
       document.getElementById("attemptCount").innerText = attempts;
 
       try {
-        const page = await fetch(`${PROXY_URL}/random`).then(r => r.json());
-        if (page.error) throw new Error(page.error);
+        const articles = await loadArticles();
+        const page = articles[Math.floor(Math.random() * articles.length)];
         targetTitle = page.title;
 
-        const parseRes = await fetch(`${PROXY_URL}/parse?pageid=${page.id}`).then(r => r.json());
-        if (parseRes.error) throw new Error(parseRes.error);
-        const rawHtml = parseRes.html;
-
-        const doc = new DOMParser().parseFromString(rawHtml, "text/html");
-        const plainText = doc.body.textContent || "";
-        rawTokens = plainText.match(/[\wÄÖÜäöüß]+|[^\w\s]+|\s+/g) || [];
+        rawTokens = page.text.match(/[\wÄÖÜäöüß]+|[^\w\s]+|\s+/g) || [];
 
         renderText();
         broadcast({ type: 'NEW_GAME', rawTokens, targetTitle });
       } catch (e) {
-        document.getElementById("content").innerText = "Fehler beim Laden. Prüfe, ob das Wiki öffentlich ist.";
+        document.getElementById("content").innerText =
+          "Fehler beim Laden von articles.json: " + e.message +
+          " — liegt die Datei im selben Ordner wie index.html?";
       }
     }
 
@@ -162,7 +167,7 @@
 
     function handleGuess(guess, isLocal) {
       if (guessedWords.has(guess)) return;
-      
+
       guessedWords.add(guess);
       attempts++;
       document.getElementById("attemptCount").innerText = attempts;
