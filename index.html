@@ -45,9 +45,13 @@
     border-radius: 10px; padding: 28px; font-size: 19px; line-height: 2;
     min-height: 400px; white-space: pre-wrap;
   }
-  #title-banner {
-    font-size: 13px; color: var(--muted); margin-bottom: 14px; letter-spacing: 0.5px;
+  #title-label {
+    font-size: 12px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px;
   }
+  #title-banner {
+    font-size: 28px; font-weight: 800; margin-bottom: 18px; line-height: 1.4;
+  }
+  #title-banner .redacted { font-size: 18px; padding: 2px 10px; }
 
   .redacted {
     display: inline-block; background: var(--redacted-bg); color: var(--redacted-text);
@@ -116,7 +120,8 @@
 
 <div class="layout">
   <div id="content-wrap" style="flex:1 1 auto;">
-    <div id="title-banner">Artikel-Rätsel — errate den Titel, indem du Wörter aus dem Text errätst</div>
+    <div id="title-label">Gesuchter Artikel-Titel:</div>
+    <div id="title-banner">Warte auf Spielstart...</div>
     <div id="content">Warte auf Spielstart...</div>
   </div>
 
@@ -125,7 +130,7 @@
       <span>Versuche: <strong id="attemptCount">0</strong></span>
     </div>
     <form id="guessForm" onsubmit="event.preventDefault(); makeGuess();">
-      <input type="text" id="guessInput" placeholder="Wort erraten...">
+      <input type="text" id="guessInput" placeholder="Wort erraten..." oninput="this.value = this.value.replace(/\s+/g, '')">
       <button type="submit">Raten</button>
     </form>
     <div id="guessList"></div>
@@ -134,6 +139,11 @@
 </div>
 
 <script>
+  // Unicode-fähig: erkennt Buchstaben aus ALLEN Sprachen als "Wort"
+  // (behebt den Bug, dass æ/ï in "Lændrïer" das Wort mitten durchtrennt haben)
+  const TOKEN_REGEX = /[\p{L}\p{N}_]+|[^\p{L}\p{N}\s]+|\s+/gu;
+  const WORD_REGEX = /^[\p{L}\p{N}_]+$/u;
+
   const ARTICLES_URL = "./articles.json";
   const COMMON_WORDS = new Set(["der", "die", "das", "des", "dem", "den", "ein", "eine", "einer", "eines", "einem", "einen", "und", "oder", "aber", "ist", "sind", "war", "waren", "von", "mit", "in", "im", "auf", "für", "an", "zu", "aus", "bei", "nach", "über", "um", "wie", "als", "auch", "nicht", "es", "er", "sie"]);
 
@@ -240,7 +250,7 @@
       const articles = await loadArticles();
       const page = articles[Math.floor(Math.random() * articles.length)];
       targetTitle = page.title;
-      rawTokens = page.text.match(/[\wÄÖÜäöüß]+|[^\w\s]+|\s+/g) || [];
+      rawTokens = page.text.match(TOKEN_REGEX) || [];
 
       renderAll();
       broadcast({ type: 'NEW_GAME', rawTokens, targetTitle });
@@ -255,7 +265,7 @@
     const input = document.getElementById("guessInput");
     const guess = input.value.trim().toLowerCase();
     input.value = "";
-    if (!guess || isWon || guessedSet.has(guess)) return;
+    if (!guess || /\s/.test(guess) || isWon || guessedSet.has(guess)) return;
     handleGuess(guess, true);
   }
 
@@ -294,38 +304,53 @@
   }
 
   function renderAll() {
+    renderTitle();
     renderText();
     renderSidebarList();
+  }
+
+  // Baut für ein Token das passende Element (redigiert/aufgedeckt/häufig/Satzzeichen)
+  function buildWordSpan(token) {
+    const clean = token.toLowerCase().trim();
+    const isWord = WORD_REGEX.test(token);
+
+    if (!isWord) {
+      return document.createTextNode(token);
+    }
+    if (COMMON_WORDS.has(clean)) {
+      const span = document.createElement("span");
+      span.className = "common";
+      span.innerText = token;
+      return span;
+    }
+    if (guessedSet.has(clean)) {
+      const span = document.createElement("span");
+      span.className = "revealed" + (selectedWord === clean ? " selected" : "");
+      span.innerText = token;
+      span.onclick = () => toggleSelect(clean);
+      return span;
+    }
+    const span = document.createElement("span");
+    span.className = "redacted";
+    span.innerText = String(clean.length);
+    return span;
+  }
+
+  function renderTitle() {
+    const banner = document.getElementById("title-banner");
+    banner.innerHTML = "";
+    if (!targetTitle) {
+      banner.innerText = "Warte auf Spielstart...";
+      return;
+    }
+    const titleTokens = targetTitle.match(TOKEN_REGEX) || [];
+    titleTokens.forEach(token => banner.appendChild(buildWordSpan(token)));
   }
 
   function renderText() {
     const container = document.getElementById("content");
     container.innerHTML = "";
-
-    rawTokens.forEach(token => {
-      const clean = token.toLowerCase().trim();
-      const isWord = /^[\wÄÖÜäöüß]+$/.test(token);
-
-      if (!isWord) {
-        container.appendChild(document.createTextNode(token));
-      } else if (COMMON_WORDS.has(clean)) {
-        const span = document.createElement("span");
-        span.className = "common";
-        span.innerText = token;
-        container.appendChild(span);
-      } else if (guessedSet.has(clean)) {
-        const span = document.createElement("span");
-        span.className = "revealed" + (selectedWord === clean ? " selected" : "");
-        span.innerText = token;
-        span.onclick = () => toggleSelect(clean);
-        container.appendChild(span);
-      } else {
-        const span = document.createElement("span");
-        span.className = "redacted";
-        span.innerText = String(clean.length);
-        container.appendChild(span);
-      }
-    });
+    rawTokens.forEach(token => container.appendChild(buildWordSpan(token)));
   }
 
   function renderSidebarList() {
