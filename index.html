@@ -508,6 +508,8 @@
     const span = document.createElement("span");
     span.className = "redacted";
     span.innerText = String(lower.length);
+    span.style.minWidth = (lower.length * 0.62 + 0.3) + "em";
+    span.style.textAlign = "center";
     return span;
   }
 
